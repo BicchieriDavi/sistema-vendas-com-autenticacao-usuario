@@ -16,6 +16,10 @@ router.post('/products', verificarToken, async (req, res) => {
             return res.status(400).json({ message: 'Esse produto já está cadastrado!' })
         }
 
+        if (qtdEstoque <= 0) {
+            return res.status(400).json({ message: 'Quantidade inválida.' })
+        }
+
         const newProduct = new Product({
             nome, preco, qtdEstoque
         })
@@ -73,6 +77,11 @@ router.put('/products/:id', verificarToken, async (req, res) => {
         if (!produto) {
             return res.status(400).json({ message: 'Produto não encontrado' })
         }
+
+        if (qtdEstoque <= 0) {
+            return res.status(400).json({ message: 'Quantidade inválida' })
+        }
+
 
         const dadosAtualizados = {
             nome: nome ?? produto.nome,

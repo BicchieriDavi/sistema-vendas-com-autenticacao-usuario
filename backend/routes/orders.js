@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const Order = require('../models/Order')
+const Product = require('../models/product')
 const verificarToken = require('../middlewares/authMiddleware')
 
 router.post('/orders', verificarToken, async (req, res) => {
@@ -10,6 +11,18 @@ router.post('/orders', verificarToken, async (req, res) => {
 
         if (!produtos || !Array.isArray(produtos) || produtos.length == 0) {
             return res.status(400).json({ message: 'Produto não foi cadastrado no sistema' })
+        }
+
+        for (let item of produtos) {
+            const produtoBanco = await Product.findById(item.produto)
+
+            if (!produtoBanco) {
+                return res.status(404).json({ message: 'Produto não encontrado' })
+            }
+
+            if (item.quantidade > produtoBanco.quantidade) {
+                return res.status(400).json({ message: 'Quantidade indicada maior que a quantidade em estoque' })
+            }
         }
 
         const novoPedido = new Order({
@@ -37,6 +50,14 @@ router.get('/orders', verificarToken, async (req, res) => {
             return res.status(404).json({ message: 'Não existem pedidos' })
         }
 
+        const pedidoComProdutoExcluido = pedidos.some(pedido =>
+            pedido.produtos.some(p => p.produto === null)
+        )
+
+        if (pedidoComProdutoExcluido) {
+            return res.status(404).json({ message: 'Produto com pedido excluído' })
+        }
+
         return res.status(201).json({ message: 'Pedidos:', pedidos })
     } catch (error) {
         console.error(error)
@@ -58,6 +79,22 @@ router.get('/orders/:id', verificarToken, async (req, res) => {
     } catch (error) {
         console.error(error)
         return res.status(400).json({ message: 'Erro ao listar pedido. ' })
+    }
+})
+
+router.delete('/orders/:id', verificarToken, async (req, res) => {
+    try {
+        const pedidoRemovido = await Order.findByIdAndDelete(req.params.id)
+
+        if (!pedidoRemovido) {
+            return res.status(400).json({ message: 'Erro ao remover pedido' })
+        }
+
+        return res.status(200).json({ message: 'Pedido removido.' })
+
+    } catch (error) {
+        console.error(error)
+        return res.status(400).json({ message: 'Erro ao remover pedido' })
     }
 })
 

@@ -3,7 +3,7 @@ const router = express.Router()
 const Product = require('../models/product')
 const verificarToken = require('../middlewares/authMiddleware')
 
-router.post('/products', verificarToken, async (req, res) => {
+router.post('/', verificarToken, async (req, res) => {
     try {
         const { nome, preco, qtdEstoque } = req.body
 
@@ -34,13 +34,13 @@ router.post('/products', verificarToken, async (req, res) => {
     }
 })
 
-router.get('/products', verificarToken, async (req, res) => {
+router.get('/', verificarToken, async (req, res) => {
     try {
 
         const produtos = await Product.find()
 
         if (produtos.length === 0) {
-            return res.status(400).json({ message: 'Não existem produtos cadastrados no sistema' })
+            return res.status(200).json({ message: 'Não existem produtos cadastrados no sistema', produtos: [] })
         }
 
         return res.status(200).json({ message: 'Produtos cadastrados:', produtos })
@@ -51,7 +51,7 @@ router.get('/products', verificarToken, async (req, res) => {
     }
 })
 
-router.get('/products/:id', verificarToken, async (req, res) => {
+router.get('/:id', verificarToken, async (req, res) => {
     try {
         const produto = await Product.findById(req.params.id)
 
@@ -67,7 +67,7 @@ router.get('/products/:id', verificarToken, async (req, res) => {
     }
 })
 
-router.put('/products/:id', verificarToken, async (req, res) => {
+router.put('/:id', verificarToken, async (req, res) => {
     try {
 
         const { nome, preco, qtdEstoque } = req.body
@@ -98,7 +98,7 @@ router.put('/products/:id', verificarToken, async (req, res) => {
     }
 })
 
-router.delete('/products/:id', verificarToken, async (req, res) => {
+router.delete('/:id', verificarToken, async (req, res) => {
     try {
 
         const produtoRemovido = await Product.findByIdAndDelete(req.params.id)

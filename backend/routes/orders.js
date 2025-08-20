@@ -4,7 +4,7 @@ const Order = require('../models/Order')
 const Product = require('../models/product')
 const verificarToken = require('../middlewares/authMiddleware')
 
-router.post('/orders', verificarToken, async (req, res) => {
+router.post('/', verificarToken, async (req, res) => {
     try {
         const userId = req.userId
         const { produtos } = req.body
@@ -25,6 +25,12 @@ router.post('/orders', verificarToken, async (req, res) => {
             }
         }
 
+        for (let item of produtos) {
+            await Product.findByIdAndUpdate(item.produto, {
+                $inc: { quantidade: -item.quantidade }
+            });
+        }
+
         const novoPedido = new Order({
             usuario: userId,
             produtos: produtos
@@ -40,14 +46,14 @@ router.post('/orders', verificarToken, async (req, res) => {
     }
 })
 
-router.get('/orders', verificarToken, async (req, res) => {
+router.get('/', verificarToken, async (req, res) => {
     try {
         const userId = req.userId
 
         const pedidos = await Order.find({ usuario: userId }).populate('produtos.produto')
 
         if (pedidos.length === 0) {
-            return res.status(404).json({ message: 'Não existem pedidos' })
+            return res.status(200).json({ message: 'Não existem pedidos', pedidos: [] })
         }
 
         const pedidoComProdutoExcluido = pedidos.some(pedido =>
@@ -58,14 +64,14 @@ router.get('/orders', verificarToken, async (req, res) => {
             return res.status(404).json({ message: 'Produto com pedido excluído' })
         }
 
-        return res.status(201).json({ message: 'Pedidos:', pedidos })
+        return res.status(200).json({ message: 'Pedidos:', pedidos })
     } catch (error) {
         console.error(error)
         return res.status(400).json({ message: 'Erro ao listar pedidos' })
     }
 })
 
-router.get('/orders/:id', verificarToken, async (req, res) => {
+router.get('/:id', verificarToken, async (req, res) => {
     try {
         const userId = req.userId;
 
@@ -75,14 +81,14 @@ router.get('/orders/:id', verificarToken, async (req, res) => {
             return res.status(404).json({ message: 'Pedido não encontrado. ' })
         }
 
-        return res.status(201).json({ message: 'Pedido encontrado: ', pedido })
+        return res.status(200).json({ message: 'Pedido encontrado: ', pedido })
     } catch (error) {
         console.error(error)
         return res.status(400).json({ message: 'Erro ao listar pedido. ' })
     }
 })
 
-router.delete('/orders/:id', verificarToken, async (req, res) => {
+router.delete('/:id', verificarToken, async (req, res) => {
     try {
         const pedidoRemovido = await Order.findByIdAndDelete(req.params.id)
 

@@ -1,44 +1,15 @@
-
-import { useEffect, useState } from 'react';
-import { Layout } from '../components/Layout';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
-import { ShoppingCart, Package, Calendar, Plus } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import Layout from '@/components/Layout';
+import { Button } from '@/components/ui/enhanced-button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-interface Order {
-  _id: string;
-  usuario: string;
-  produtos: Array<{
-    produto: {
-      _id: string;
-      nome: string;
-      preco: number;
-    };
-    quantidade: number;
-  }>;
-  dataPedido: string;
-}
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { toast } from '@/hooks/use-toast';
+import { Plus, ShoppingCart, Trash2, Calendar, Package } from 'lucide-react';
 
 interface Product {
   _id: string;
@@ -47,214 +18,233 @@ interface Product {
   qtdEstoque: number;
 }
 
+interface OrderItem {
+  produto: Product;
+  quantidade: number;
+}
+
+interface Order {
+  _id: string;
+  usuario: string;
+  produtos: OrderItem[];
+  dataPedido: string;
+}
+
 const Orders = () => {
-  const { token } = useAuth();
-  const { toast } = useToast();
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const queryClient = useQueryClient();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [orderItems, setOrderItems] = useState<{ produto: string; quantidade: number }[]>([]);
 
-  useEffect(() => {
-    fetchOrders();
-    fetchProducts();
-  }, [token]);
+  const { data: ordersData, isLoading: ordersLoading } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => api.getOrders(),
+    retry: 2,
+    staleTime: 1000 * 60 * 5, // 5 minutos
+    refetchOnWindowFocus: false,
+  });
 
-  const fetchOrders = async () => {
-    try {
-      const response = await fetch('http://localhost:3000/orders/orders', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+  const { data: productsData } = useQuery({
+    queryKey: ['products'],
+    queryFn: () => api.getProducts(),
+    retry: 2,
+    staleTime: 1000 * 60 * 5, // 5 minutos
+    refetchOnWindowFocus: false,
+  });
 
-      if (response.ok) {
-        const data = await response.json();
-        setOrders(data.pedidos || []);
-      } else {
-        const error = await response.json();
-        if (error.message !== 'Não existem pedidos') {
-          toast({
-            title: "Erro ao carregar pedidos",
-            description: error.message,
-            variant: "destructive",
-          });
-        }
-      }
-    } catch (error) {
+  const createMutation = useMutation({
+    mutationFn: (produtos: { produto: string; quantidade: number }[]) =>
+      api.createOrder(produtos),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setIsCreateOpen(false);
+      setOrderItems([]);
       toast({
-        title: "Erro de conexão",
-        description: "Não foi possível conectar ao servidor",
+        title: "Pedido criado",
+        description: "Pedido realizado com sucesso!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+  });
 
-  const fetchProducts = async () => {
-    try {
-      const response = await fetch('http://localhost:3000/products/products', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setProducts(data.produtos || []);
-      }
-    } catch (error) {
-      console.error('Erro ao buscar produtos:', error);
-    }
-  };
-
-  const handleCreateOrder = async () => {
-    if (!selectedProduct || !quantity) {
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.deleteOrder(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast({
-        title: "Campos obrigatórios",
-        description: "Selecione um produto e quantidade",
+        title: "Pedido removido",
+        description: "Pedido removido com sucesso!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const orders: Order[] = ordersData?.pedidos || [];
+  const products: Product[] = productsData?.produtos || [];
+
+  const addOrderItem = () => {
+    setOrderItems([...orderItems, { produto: '', quantidade: 1 }]);
+  };
+
+  const updateOrderItem = (index: number, field: 'produto' | 'quantidade', value: string | number) => {
+    const updated = [...orderItems];
+    updated[index] = { ...updated[index], [field]: value };
+    setOrderItems(updated);
+  };
+
+  const removeOrderItem = (index: number) => {
+    setOrderItems(orderItems.filter((_, i) => i !== index));
+  };
+
+  const handleCreateOrder = () => {
+    const validItems = orderItems.filter(item => item.produto && item.quantidade > 0);
+
+    if (validItems.length === 0) {
+      toast({
+        title: "Erro",
+        description: "Adicione pelo menos um produto ao pedido",
         variant: "destructive",
       });
       return;
     }
 
-    setIsCreatingOrder(true);
+    for (const item of validItems) {
 
-    try {
-      const response = await fetch('http://localhost:3000/orders/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          produtos: [{
-            produto: selectedProduct,
-            quantidade: parseInt(quantity),
-          }],
-        }),
-      });
+      const productDetails = products.find(p => p._id === item.produto);
 
-      const data = await response.json();
 
-      if (response.ok) {
+      if (productDetails && item.quantidade > productDetails.qtdEstoque) {
         toast({
-          title: "Pedido criado com sucesso!",
-          description: "O pedido foi adicionado ao sistema.",
-        });
-        setIsDialogOpen(false);
-        setSelectedProduct('');
-        setQuantity('1');
-        fetchOrders();
-      } else {
-        toast({
-          title: "Erro ao criar pedido",
-          description: data.message,
+          title: "Estoque insuficiente",
+          description: `O produto "${productDetails.nome}" possui apenas ${productDetails.qtdEstoque} unidades em estoque.`,
           variant: "destructive",
         });
+        return;
       }
-    } catch (error) {
-      toast({
-        title: "Erro de conexão",
-        description: "Não foi possível conectar ao servidor",
-        variant: "destructive",
-      });
-    } finally {
-      setIsCreatingOrder(false);
     }
+
+    createMutation.mutate(validItems);
   };
 
-  const calculateOrderTotal = (order: Order) => {
-    return order.produtos.reduce((total, item) => {
-      if (item.produto) return total + (item.produto.preco * item.quantidade);
-      else return total;
+  const getOrderTotal = (order: Order) => {
+    return order.produtos.reduce((sum, item) => {
+      return sum + (item.produto?.preco || 0) * item.quantidade;
     }, 0);
   };
 
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <ShoppingCart className="mx-auto h-12 w-12 text-gray-400 animate-pulse" />
-            <p className="mt-2 text-gray-500">Carregando pedidos...</p>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight">Pedidos</h2>
-            <p className="text-muted-foreground">
-              Visualize e gerencie os pedidos do sistema
+      <div className="space-y-8 p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+              Pedidos
+            </h1>
+            <p className="text-lg text-muted-foreground">
+              Gerencie todos os pedidos do sistema
             </p>
           </div>
-
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-blue-700">
+              <Button variant="gradient" className="shadow-elegant hover:shadow-glow transition-all duration-300">
                 <Plus className="mr-2 h-4 w-4" />
                 Novo Pedido
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>Criar Novo Pedido</DialogTitle>
-                <DialogDescription>
-                  Selecione um produto e quantidade para criar um pedido
-                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="product">Produto</Label>
-                  <Select value={selectedProduct} onValueChange={setSelectedProduct}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione um produto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((product) => (
-                        <SelectItem key={product._id} value={product._id}>
-                          {product.nome} - R$ {product.preco.toFixed(2)} (Estoque: {product.qtdEstoque})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="space-y-4">
+                  {orderItems.map((item, index) => {
+                    // Encontra o produto selecionado para obter o estoque
+                    const selectedProduct = products.find(p => p._id === item.produto);
+                    const maxQuantity = selectedProduct ? selectedProduct.qtdEstoque : undefined;
+
+                    return (
+                      <div key={index} className="flex gap-4 items-end">
+                        <div className="flex-1">
+                          <Label>Produto</Label>
+                          <Select
+                            value={item.produto}
+                            onValueChange={(value) => updateOrderItem(index, 'produto', value)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione um produto" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {products.map((product) => (
+                                <SelectItem key={product._id} value={product._id} disabled={product.qtdEstoque === 0}>
+                                  {product.nome} - R$ {product.preco.toFixed(2)} (Estoque: {product.qtdEstoque})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="w-24">
+                          <Label>Qtd</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            max={maxQuantity} // <-- ADICIONADO AQUI
+                            value={item.quantidade}
+                            onChange={(e) => {
+                              let value = parseInt(e.target.value) || 1;
+                              // Opcional: Forçar o valor a não ultrapassar o máximo
+                              if (maxQuantity && value > maxQuantity) {
+                                value = maxQuantity;
+                              }
+                              updateOrderItem(index, 'quantidade', value);
+                            }}
+                            disabled={!selectedProduct} // Desabilita se nenhum produto for selecionado
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => removeOrderItem(index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="quantity">Quantidade</Label>
-                  <Input
-                    id="quantity"
-                    type="number"
-                    min="1"
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                  />
-                </div>
+                <Button variant="outline" onClick={addOrderItem}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Adicionar Produto
+                </Button>
 
-                <div className="flex space-x-2">
+                <div className="flex gap-2 pt-4">
                   <Button
-                    variant="outline"
-                    onClick={() => setIsDialogOpen(false)}
-                    className="flex-1"
+                    variant="gradient"
+                    onClick={handleCreateOrder}
+                    disabled={createMutation.isPending || orderItems.length === 0}
                   >
-                    Cancelar
+                    Criar Pedido
                   </Button>
                   <Button
-                    onClick={handleCreateOrder}
-                    disabled={isCreatingOrder}
-                    className="flex-1"
+                    variant="outline"
+                    onClick={() => {
+                      setIsCreateOpen(false);
+                      setOrderItems([]);
+                    }}
                   >
-                    {isCreatingOrder ? "Criando..." : "Criar Pedido"}
+                    Cancelar
                   </Button>
                 </div>
               </div>
@@ -262,122 +252,84 @@ const Orders = () => {
           </Dialog>
         </div>
 
-        {orders.length === 0 ? (
-          <Card>
-            <CardContent className="text-center py-12">
-              <ShoppingCart className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                Nenhum pedido encontrado
-              </h3>
-              <p className="text-gray-500 mb-4">
-                Crie seu primeiro pedido no sistema
-              </p>
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button className="bg-blue-600 hover:bg-blue-700">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Criar Pedido
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Criar Novo Pedido</DialogTitle>
-                    <DialogDescription>
-                      Selecione um produto e quantidade para criar um pedido
-                    </DialogDescription>
-                  </DialogHeader>
+        {/* Orders List */}
+        {ordersLoading ? (
+          <div className="space-y-6">
+            {[...Array(3)].map((_, i) => (
+              <Card key={i} className="bg-gradient-subtle border-border/50 shadow-elegant animate-pulse">
+                <CardContent className="p-6">
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="product">Produto</Label>
-                      <Select value={selectedProduct} onValueChange={setSelectedProduct}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione um produto" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {products.map((product) => (
-                            <SelectItem key={product._id} value={product._id}>
-                              {product.nome} - R$ {product.preco.toFixed(2)} (Estoque: {product.qtdEstoque})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="quantity">Quantidade</Label>
-                      <Input
-                        id="quantity"
-                        type="number"
-                        min="1"
-                        value={quantity}
-                        onChange={(e) => setQuantity(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="flex space-x-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => setIsDialogOpen(false)}
-                        className="flex-1"
-                      >
-                        Cancelar
-                      </Button>
-                      <Button
-                        onClick={handleCreateOrder}
-                        disabled={isCreatingOrder}
-                        className="flex-1"
-                      >
-                        {isCreatingOrder ? "Criando..." : "Criar Pedido"}
-                      </Button>
-                    </div>
+                    <div className="h-6 bg-muted/50 rounded" />
+                    <div className="h-4 bg-muted/50 rounded w-2/3" />
+                    <div className="h-4 bg-muted/50 rounded w-1/2" />
                   </div>
-                </DialogContent>
-              </Dialog>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-4">
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : orders.length > 0 ? (
+          <div className="space-y-6">
             {orders.map((order) => (
-              <Card key={order._id}>
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <span className="flex items-center space-x-2">
-                      <ShoppingCart className="h-5 w-5" />
-                      <span>Pedido #{order._id.slice(-6)}</span>
-                    </span>
-                    <div className="text-right">
-                      <div className="text-lg font-bold text-green-600">
-                        R$ {calculateOrderTotal(order).toFixed(2)}
+              <Card key={order._id} className="bg-gradient-subtle border-border shadow-elegant hover:shadow-glow transition-all duration-300 group">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 rounded-lg bg-success/10">
+                      <ShoppingCart className="h-6 w-6 text-success" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-xl font-bold">Pedido #{order._id.slice(-6)}</CardTitle>
+                      <div className="flex items-center gap-6 text-sm text-muted-foreground mt-1">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-4 w-4" />
+                          {new Date(order.dataPedido).toLocaleDateString('pt-BR', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Package className="h-4 w-4" />
+                          {order.produtos.length} item(s)
+                        </span>
                       </div>
                     </div>
-                  </CardTitle>
-                  <CardDescription className="flex items-center space-x-2">
-                    <Calendar className="h-4 w-4" />
-                    <span>
-                      {format(new Date(order.dataPedido), "dd 'de' MMMM 'de' yyyy 'às' HH:mm", {
-                        locale: ptBR,
-                      })}
-                    </span>
-                  </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-3xl font-bold text-primary">
+                        R$ {getOrderTotal(order).toFixed(2)}
+                      </p>
+                      <p className="text-sm text-muted-foreground font-medium">Total do pedido</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => deleteMutation.mutate(order._id)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
-                    <h4 className="font-medium flex items-center space-x-2">
-                      <Package className="h-4 w-4" />
-                      <span>Produtos:</span>
-                    </h4>
-                    {order.produtos.filter(item => item.produto).map((item, index) => (
-                      <div key={index} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <div>
-                          <p className="font-medium">{item.produto.nome}</p>
-                          <p className="text-sm text-gray-600">
-                            Quantidade: {item.quantidade} unidades
+                  <div className="space-y-3">
+                    {order.produtos.map((item, index) => (
+                      <div key={index} className="flex justify-between items-center p-4 bg-background/50 rounded-lg border border-border/50 hover:border-primary/20 transition-colors">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-lg text-foreground">{item.produto?.nome || 'Produto removido'}</p>
+                          <p className="text-sm text-muted-foreground">
+                            Quantidade: <span className="font-medium text-accent-foreground">{item.quantidade}</span>
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="font-medium">R$ {item.produto.preco.toFixed(2)}</p>
-                          <p className="text-sm text-gray-600">
-                            Total: R$ {(item.produto.preco * item.quantidade).toFixed(2)}
+                          <p className="font-bold text-xl text-primary">
+                            R$ {((item.produto?.preco || 0) * item.quantidade).toFixed(2)}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            R$ {(item.produto?.preco || 0).toFixed(2)} cada
                           </p>
                         </div>
                       </div>
@@ -387,6 +339,22 @@ const Orders = () => {
               </Card>
             ))}
           </div>
+        ) : (
+          <Card className="bg-gradient-subtle border-border shadow-elegant">
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <div className="p-4 rounded-full bg-success/10 mb-6">
+                <ShoppingCart className="h-12 w-12 text-success" />
+              </div>
+              <h3 className="text-2xl font-bold mb-3">Nenhum pedido encontrado</h3>
+              <p className="text-muted-foreground text-center mb-6 max-w-md">
+                Quando os pedidos forem criados, eles aparecerão aqui. Comece criando seu primeiro pedido!
+              </p>
+              <Button variant="gradient" className="shadow-elegant hover:shadow-glow transition-all duration-300" onClick={() => setIsCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Criar primeiro pedido
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </div>
     </Layout>

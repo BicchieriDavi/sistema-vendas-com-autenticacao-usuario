@@ -1,23 +1,14 @@
-
-import { useEffect, useState } from 'react';
-import { Layout } from '../components/Layout';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
-import { useToast } from '@/hooks/use-toast';
-import { Edit, Trash2, Plus, Package } from 'lucide-react';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import Layout from '@/components/Layout';
+import { Button } from '@/components/ui/enhanced-button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { toast } from '@/hooks/use-toast';
+import { Plus, Edit, Trash2, Package } from 'lucide-react';
 
 interface Product {
   _id: string;
@@ -27,196 +18,271 @@ interface Product {
 }
 
 const Products = () => {
-  const { token } = useAuth();
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [formData, setFormData] = useState({
+    nome: '',
+    preco: '',
+    qtdEstoque: '',
+  });
 
-  useEffect(() => {
-    fetchProducts();
-  }, [token]);
+  const { data: productsData, isLoading } = useQuery({
+    queryKey: ['products'],
+    queryFn: () => api.getProducts(),
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
 
-  const fetchProducts = async () => {
-    try {
-      const response = await fetch('http://localhost:3000/products/products', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setProducts(data.produtos || []);
-      } else {
-        const error = await response.json();
-        if (error.message !== 'Não existem produtos cadastrados no sistema') {
-          toast({
-            title: "Erro ao carregar produtos",
-            description: error.message,
-            variant: "destructive",
-          });
-        }
-      }
-    } catch (error) {
+  const createMutation = useMutation({
+    mutationFn: (data: { nome: string; preco: number; qtdEstoque: number }) =>
+      api.createProduct(data.nome, data.preco, data.qtdEstoque),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setIsCreateOpen(false);
+      setFormData({ nome: '', preco: '', qtdEstoque: '' });
       toast({
-        title: "Erro de conexão",
-        description: "Não foi possível conectar ao servidor",
+        title: "Produto criado",
+        description: "Produto cadastrado com sucesso!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) =>
+      api.updateProduct(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setEditingProduct(null);
+      setFormData({ nome: '', preco: '', qtdEstoque: '' });
+      toast({
+        title: "Produto atualizado",
+        description: "Produto atualizado com sucesso!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.deleteProduct(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast({
+        title: "Produto removido",
+        description: "Produto removido com sucesso!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const products = productsData?.produtos || [];
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const data = {
+      nome: formData.nome,
+      preco: parseFloat(formData.preco),
+      qtdEstoque: parseInt(formData.qtdEstoque),
+    };
+
+    if (editingProduct) {
+      updateMutation.mutate({ id: editingProduct._id, data });
+    } else {
+      createMutation.mutate(data);
     }
   };
 
-  const handleDeleteProduct = async (id: string) => {
-    try {
-      const response = await fetch(`http://localhost:3000/products/products/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        toast({
-          title: "Produto excluído com sucesso!",
-        });
-        fetchProducts();
-      } else {
-        const error = await response.json();
-        toast({
-          title: "Erro ao excluir produto",
-          description: error.message,
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Erro de conexão",
-        description: "Não foi possível excluir o produto",
-        variant: "destructive",
-      });
-    }
+  const startEdit = (product: Product) => {
+    setEditingProduct(product);
+    setFormData({
+      nome: product.nome,
+      preco: product.preco.toString(),
+      qtdEstoque: product.qtdEstoque.toString(),
+    });
   };
 
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <Package className="mx-auto h-12 w-12 text-gray-400 animate-pulse" />
-            <p className="mt-2 text-gray-500">Carregando produtos...</p>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
+  const resetForm = () => {
+    setFormData({ nome: '', preco: '', qtdEstoque: '' });
+    setEditingProduct(null);
+  };
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
+      <div className="space-y-8 p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">Produtos</h2>
+            <h1 className="text-3xl font-bold text-foreground mb-2">
+              Produtos
+            </h1>
             <p className="text-muted-foreground">
-              Gerencie os produtos do seu sistema
+              Gerencie seu catálogo de produtos
             </p>
           </div>
-          <Button 
-            onClick={() => navigate('/products/create')}
-            className="bg-green-600 hover:bg-green-700"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Novo Produto
-          </Button>
+          <Dialog open={isCreateOpen || !!editingProduct} onOpenChange={(open) => {
+            if (!open) {
+              setIsCreateOpen(false);
+              resetForm();
+            }
+          }}>
+            <DialogTrigger asChild>
+              <Button onClick={() => setIsCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Novo Produto
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {editingProduct ? 'Editar Produto' : 'Novo Produto'}
+                </DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="nome">Nome do produto</Label>
+                  <Input
+                    id="nome"
+                    value={formData.nome}
+                    onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="preco">Preço</Label>
+                  <Input
+                    id="preco"
+                    type="number"
+                    step="0.01"
+                    value={formData.preco}
+                    onChange={(e) => setFormData({ ...formData, preco: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="qtdEstoque">Quantidade em estoque</Label>
+                  <Input
+                    id="qtdEstoque"
+                    type="number"
+                    value={formData.qtdEstoque}
+                    onChange={(e) => setFormData({ ...formData, qtdEstoque: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    type="submit" 
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                  >
+                    {editingProduct ? 'Atualizar' : 'Criar'}
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={resetForm}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
 
-        {products.length === 0 ? (
-          <Card>
-            <CardContent className="text-center py-12">
-              <Package className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                Nenhum produto cadastrado
-              </h3>
-              <p className="text-gray-500 mb-4">
-                Comece criando seu primeiro produto no sistema
-              </p>
-              <Button 
-                onClick={() => navigate('/products/create')}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Criar Produto
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {products.map((product) => (
-              <Card key={product._id} className="hover:shadow-lg transition-shadow">
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <span className="truncate">{product.nome}</span>
-                    {product.qtdEstoque < 10 && (
-                      <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full">
-                        Baixo
-                      </span>
-                    )}
-                  </CardTitle>
-                  <CardDescription>
-                    Estoque: {product.qtdEstoque} unidades
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="text-2xl font-bold text-green-600">
-                      R$ {product.preco.toFixed(2)}
-                    </div>
-                  </div>
-                  
-                  <div className="flex space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => navigate(`/products/edit/${product._id}`)}
-                      className="flex-1"
-                    >
-                      <Edit className="mr-2 h-4 w-4" />
-                      Editar
-                    </Button>
-                    
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="destructive" size="sm" className="flex-1">
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Excluir
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Tem certeza que deseja excluir o produto "{product.nome}"? 
-                            Esta ação não pode ser desfeita.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => handleDeleteProduct(product._id)}
-                            className="bg-red-600 hover:bg-red-700"
-                          >
-                            Excluir
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+        {/* Products Grid */}
+        {isLoading ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => (
+              <Card key={i} className="animate-pulse">
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    <div className="h-4 bg-muted rounded" />
+                    <div className="h-4 bg-muted rounded w-2/3" />
+                    <div className="h-4 bg-muted rounded w-1/2" />
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
+        ) : products.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {products.map((product: Product) => (
+              <Card key={product._id} className="hover:shadow-md transition-shadow">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+                  <div className="p-2 rounded-lg bg-muted">
+                    <Package className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => startEdit(product)}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => deleteMutation.mutate(product._id)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <h3 className="font-semibold text-lg mb-2">{product.nome}</h3>
+                    <div className="flex items-center justify-between">
+                      <p className="text-2xl font-bold text-primary">
+                        R$ {product.preco.toFixed(2)}
+                      </p>
+                      <div className="text-right">
+                        <p className="text-sm text-muted-foreground">Estoque</p>
+                        <p className="font-semibold">{product.qtdEstoque}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className={`w-2 h-2 rounded-full ${product.qtdEstoque > 10 ? 'bg-green-500' : product.qtdEstoque > 0 ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                    {product.qtdEstoque > 10 ? 'Em estoque' : product.qtdEstoque > 0 ? 'Estoque baixo' : 'Sem estoque'}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <Package className="h-12 w-12 text-muted-foreground mb-4" />
+              <h3 className="text-xl font-semibold mb-2">Nenhum produto cadastrado</h3>
+              <p className="text-muted-foreground text-center mb-6 max-w-md">
+                Comece criando seu primeiro produto para gerenciar seu catálogo.
+              </p>
+              <Button onClick={() => setIsCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Criar primeiro produto
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </div>
     </Layout>
